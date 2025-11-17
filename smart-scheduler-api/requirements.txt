@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+beanie
+numpy
+openai
+passlib[bcrypt]
+python-jose
+email-validator
+dnspython
+python-multipart
