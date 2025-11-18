@@ -1,7 +1,7 @@
 # smart-scheduler-api/auth/security.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from passlib.context import CryptContext
+import bcrypt
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -15,19 +15,34 @@ SECRET_KEY = "DAY_LA_KHOA_BI_MAT_CUA_BAN" # Hãy đổi thành 1 chuỗi ngẫu 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 1 ngày
 
-# --- Cấu hình Passlib ---
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # --- OAuth2 ---
 # /api/login là URL mà React sẽ gửi form login đến
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 
 # --- HÀM HASH MẬT KHẨU ---
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+# Bcrypt chỉ chấp nhận password tối đa 72 bytes
+MAX_PASSWORD_BYTES = 72
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def _truncate_password_bytes(password: str) -> bytes:
+    """Truncate password về 72 bytes nếu cần (bcrypt limitation)"""
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > MAX_PASSWORD_BYTES:
+        return password_bytes[:MAX_PASSWORD_BYTES]
+    return password_bytes
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password - tự động truncate nếu cần"""
+    password_bytes = _truncate_password_bytes(plain_password)
+    hashed_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
+
+def get_password_hash(password: str) -> str:
+    """Hash password - tự động truncate nếu quá 72 bytes"""
+    password_bytes = _truncate_password_bytes(password)
+    # Generate salt và hash
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 # --- HÀM TẠO TOKEN ---
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):

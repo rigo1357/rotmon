@@ -1,5 +1,5 @@
 // src/context/AuthContext.js
-import React, { createContext, useState, useContext } from 'react';
+import React, { createContext, useState, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api'; // Import api đã cấu hình
 
@@ -9,6 +9,30 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('access_token'));
   const navigate = useNavigate();
+
+  const logout = (options = { redirect: true }) => {
+    localStorage.removeItem('access_token');
+    setUser(null);
+    setIsLoggedIn(false);
+    if (options.redirect) {
+      navigate('/login');
+    }
+  };
+
+  const fetchCurrentUser = async ({ logoutOnError = true } = {}) => {
+    try {
+      const response = await api.get('/api/users/me');
+      setUser(response.data);
+      setIsLoggedIn(true);
+      return response.data;
+    } catch (error) {
+      console.error('Không thể lấy thông tin người dùng:', error);
+      if (logoutOnError) {
+        logout();
+      }
+      throw error;
+    }
+  };
 
   const login = async (username, password) => {
     try {
@@ -24,29 +48,40 @@ export const AuthProvider = ({ children }) => {
       });
 
       if (response.data.access_token) {
-        // 1. Lưu token vào localStorage
         localStorage.setItem('access_token', response.data.access_token);
-        
-        // 2. Lấy thông tin user (ví dụ)
-        // (Bạn có thể gọi thêm /api/users/me ở đây để lấy `user` thật)
-        setUser({ username }); 
-        setIsLoggedIn(true);
-        
-        // 3. Chuyển hướng đến trang app
-        navigate('/app');
+        try {
+          const profile = await fetchCurrentUser({ logoutOnError: false });
+          if (profile?.is_admin) {
+            navigate('/admin');
+          } else {
+            navigate('/app');
+          }
+        } catch (error) {
+          console.warn('Không thể lấy thông tin người dùng ngay sau đăng nhập, dùng thông tin tạm thời.', error);
+          setUser({ username, is_admin: false });
+          setIsLoggedIn(true);
+          navigate('/app');
+        }
+        return true;
       }
+      return false;
     } catch (error) {
       console.error('Lỗi đăng nhập:', error);
-      alert('Sai tên đăng nhập hoặc mật khẩu!');
+      const errorMessage = error.response?.data?.detail 
+        || error.response?.data?.message 
+        || error.message 
+        || 'Sai tên đăng nhập hoặc mật khẩu!';
+      alert(errorMessage);
+      return false;
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('access_token');
-    setUser(null);
-    setIsLoggedIn(false);
-    navigate('/login');
-  };
+  useEffect(() => {
+    if (localStorage.getItem('access_token')) {
+      fetchCurrentUser().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <AuthContext.Provider value={{ isLoggedIn, user, login, logout }}>

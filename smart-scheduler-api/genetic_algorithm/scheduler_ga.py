@@ -5,10 +5,13 @@ import numpy as np # Đảm bảo bạn đã import numpy
 # ... (Toàn bộ code ScheduleGA và find_optimal_schedule của bạn ở đây) ...
 # (Code bạn gửi đã rất tốt, giữ nguyên)
 class ScheduleGA:
-    def __init__(self, subjects, time_slots, constraints):
+    def __init__(self, subjects, time_slots, constraints, priorities=None, additional_constraints=None, subject_details=None):
         self.subjects = subjects
         self.time_slots = time_slots
         self.constraints = constraints # Ví dụ: {'Toán': ['Thứ 2 - Sáng']}
+        self.priorities = priorities or {}  # Dictionary: subject_name -> priority (1-10)
+        self.additional_constraints = additional_constraints or {}  # Ràng buộc bổ sung
+        self.subject_details = subject_details or {}
         
         self.num_subjects = len(subjects)
         self.num_slots = len(time_slots)
@@ -24,23 +27,86 @@ class ScheduleGA:
     def calculate_fitness(self, individual):
         penalty = 0
         
-        # Ràng buộc 1: Trùng lịch (Penalty 1000)
-        slots_used = set()
-        for slot_index in individual:
+        # Ràng buộc 1: Trùng lịch (Penalty 1000, nhưng ưu tiên môn có priority cao hơn)
+        slots_used = {}  # slot_index -> list of subjects
+        for i, slot_index in enumerate(individual):
+            subject_name = self.subjects[i]
             if slot_index in slots_used:
-                penalty += 1000 # Phạt nặng nếu trùng
-            slots_used.add(slot_index)
+                # Nếu trùng, ưu tiên môn có priority cao hơn
+                existing_subject = slots_used[slot_index][0]
+                current_priority = self.priorities.get(subject_name, 5)
+                existing_priority = self.priorities.get(existing_subject, 5)
+                
+                if current_priority > existing_priority:
+                    # Môn hiện tại có priority cao hơn, giữ lại
+                    penalty += 1000  # Vẫn phạt nhưng ít hơn
+                else:
+                    # Môn hiện tại có priority thấp hơn, phạt nặng hơn
+                    penalty += 1500
+            else:
+                slots_used[slot_index] = [subject_name]
             
-        # Ràng buộc 2: Giờ cấm (Penalty 500)
+        # Ràng buộc 2: Giờ cấm (Penalty 500, tăng theo priority thấp)
         for i, subject_name in enumerate(self.subjects):
             if subject_name in self.constraints:
-                forbidden_slots = self.constraints[subject_name] # ['Thứ 2 - Sáng']
+                forbidden_slots = self.constraints[subject_name]
                 
                 assigned_slot_index = individual[i]
                 assigned_slot_name = self.time_slots[assigned_slot_index]
                 
                 if assigned_slot_name in forbidden_slots:
-                    penalty += 500 # Phạt nặng nếu vi phạm giờ cấm
+                    priority = self.priorities.get(subject_name, 5)
+                    # Môn có priority cao hơn bị phạt ít hơn khi vi phạm
+                    penalty += 500 - (priority - 5) * 50
+
+        # Ràng buộc 3: Tránh xếp các môn học liên tiếp
+        if self.additional_constraints.get('avoidConsecutive', False):
+            for i in range(len(individual) - 1):
+                slot1 = self.time_slots[individual[i]]
+                slot2 = self.time_slots[individual[i + 1]]
+                # Kiểm tra nếu 2 môn liên tiếp cùng ngày
+                day1 = slot1.split('_')[0]
+                day2 = slot2.split('_')[0]
+                if day1 == day2:
+                    penalty += 200  # Phạt nhẹ nếu liên tiếp
+
+        # Ràng buộc 4: Cân bằng số môn học giữa các ngày
+        if self.additional_constraints.get('balanceDays', False):
+            day_counts = {}
+            for slot_index in individual:
+                slot_name = self.time_slots[slot_index]
+                day = slot_name.split('_')[0]
+                day_counts[day] = day_counts.get(day, 0) + 1
+            
+            if day_counts:
+                max_count = max(day_counts.values())
+                min_count = min(day_counts.values())
+                penalty += (max_count - min_count) * 50  # Phạt nếu chênh lệch nhiều
+
+        # Ràng buộc 5: Ưu tiên học buổi sáng
+        if self.additional_constraints.get('preferMorning', False):
+            for i, slot_index in enumerate(individual):
+                slot_name = self.time_slots[slot_index]
+                if 'Chiều' in slot_name:
+                    penalty += 100  # Phạt nhẹ nếu xếp buổi chiều
+
+        # Ràng buộc 6: Cho phép học thứ 7
+        if not self.additional_constraints.get('allowSaturday', False):
+            for i, slot_index in enumerate(individual):
+                slot_name = self.time_slots[slot_index]
+                if 'T7' in slot_name:
+                    penalty += 300  # Phạt nếu xếp thứ 7 khi không cho phép
+
+        # Ràng buộc 7: Ưu tiên môn học lại (nếu không được xếp slot, phạt nặng)
+        # (được xử lý gián tiếp qua priority; ở đây bổ sung phạt nếu bị đẩy vào Tối khi không phải retake)
+        for i, slot_index in enumerate(individual):
+            subject_name = self.subjects[i]
+            slot_name = self.time_slots[slot_index]
+            is_retake = self.subject_details.get(subject_name, {}).get("is_retake", False)
+            if not is_retake and "Tối" in slot_name:
+                penalty += 80  # Giảm xếp lớp thường vào buổi tối
+            if is_retake and "Sáng" in slot_name:
+                penalty -= 20  # Khuyến khích môn học lại lên buổi sáng sớm để ưu tiên
 
         return penalty
 
@@ -128,7 +194,7 @@ class ScheduleGA:
 # ----------------------------------------------------
 # HÀM "CÔNG KHAI" ĐỂ main.py GỌI
 # ----------------------------------------------------
-def find_optimal_schedule(subjects, time_slots, constraints):
-    ga = ScheduleGA(subjects, time_slots, constraints)
+def find_optimal_schedule(subjects, time_slots, constraints, priorities=None, additional_constraints=None, subject_details=None):
+    ga = ScheduleGA(subjects, time_slots, constraints, priorities, additional_constraints, subject_details)
     final_schedule, final_cost = ga.run_ga()
     return final_schedule, final_cost

@@ -3,6 +3,7 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: 'http://localhost:8000', // URL gốc của FastAPI server
+  timeout: 15000, // 15s để tránh treo request nếu backend không phản hồi
 });
 
 // "Bộ lọc" (Interceptor) này sẽ tự động thêm token vào header
@@ -15,6 +16,16 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
+    return Promise.reject(error);
+  }
+);
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.code === 'ECONNABORTED') {
+      console.error('Yêu cầu quá thời gian chờ:', error.message);
+    }
     return Promise.reject(error);
   }
 );
